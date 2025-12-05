@@ -1,0 +1,133 @@
+---
+title: "Final Projec -- Math 4211, Spring 2024"
+author: "Jimin"
+date: "4/18/2024"
+output:
+  html_document:
+    toc: true
+  pdf_document:
+---
+
+```{r setup, include=FALSE }
+## You may use include=FALSE to hide this setup procedure
+knitr::opts_chunk$set(echo = FALSE,tidy=TRUE)
+#knitr::opts_chunk$set(echo = FALSE, results = 'asis',
+#                      fig.align = "center")
+## format inline output with three digits after the decimal point. 
+knitr::knit_hooks$set(inline = function(x) {
+  if (is.double(x))  x <- sprintf("%1.3f", x)
+  paste(x, collapse = ", ")
+})
+
+## commonly used libraries
+libs0=c("readxl","ggplot2") 
+libs1=c("tidyverse")
+libs2=c("summarytools","kableExtra","stargazer","EnvStats","ggpubr")
+lapply(c(libs0,libs1,libs2), require, character.only = TRUE)
+library(sjPlot)
+
+```
+
+# Guide
+
+- **Presentation**: Please present your main result on Monday, May 6th, 1-3 pm. Each group of students will give a 15-minutes presentation during the designed exam time. The slides are required to posted on Canvas (the Discussion Board). 
+
+- **Report**: Each student should write an individual report, which is due on Tuesday, May 8 11:59 pm. Please submit your statistical report via Gradescope and your source code via Canvas. Your presentation (10%) and your written report (10%) together counts for the 20% of your course grade.
+
+- **Confidentiality Agreement**: Note the posed data is only for educational propose and should not be used outside of this class. Please include the following confidentiality agreement at the BEGINNING of your report.
+
+  "I understood and agreed to that the data used in this report must be kept confidential and must not be shared or distributed outside this class. The statistical analysis, the result and the report were agreed to be only used in this class and will not be posted or published without the authorization of Prof. Jimin Ding."
+
+- **Format**: Your statistical report should contain
+ introduction (background of the study and overall scientific aims), methodology and model setup (review of general statistical methods and rationales of your model choice), analysis result, conclusion and discussion. 
+ You should clearly label all your figures and tables. All the included figures and tables should be referred in the main text and you can highlight some numbers in your tables to make your findings more noticeable. Remember that the readers of your report may not be all statisticians but someone who has only limited statistical knowledge. So please write your report toward general audience, explain your main statistical findings in layman's terms, and interpret your results in the scientific context. 
+
+
+- **Length**: The report, including the tables and figures, should be NO LONGER THAN 10 PAGES. The margins should be at least 1.5 inches and the front size should be at least 12 points. 
+
+- **Coding**: Please use R to analyze the data. It is also wise code with comments to make your codes easy to understand and more readable. 
+
+\newpage
+
+# Data and Background
+
+A recent survey on U.S. public opinions about scientists, religion, and COVID policies were conducted by Pew Research Center in Sep, 2022. This is a nationally representative online survey collected from the American Trends Panel (ATP), which contains more than 10,000 adults selected at random from across the entire U.S. Learn more details about ATP surveys at 
+https://www.pewresearch.org/the-american-trends-panel/ . 
+
+One of the interesting questions in the survey is COVID vaccination uptake, which is recorded in the variable `COVID_vaccinated}`. For example, when examining vaccination rates, we find that 89% of panelists who expressed trust in elected officials received the COVID vaccine, compared to only 81% of those who did not. This suggests that low trust could be a factor in vaccine hesitancy. Furthermore, factors such as age, race, education, and income are also known to influence people's opinions about the new vaccine. Please use these survey data to explore potential risk factors for obstacles to COVID vaccination. The following prompts should guide your analysis in the report.
+
+
+ - 1. Create a contingency table to summarize the COVID vaccination uptake and trust in elected officials `trust`, which was created by combining 1-2 and 3-4 from the variable `CONF_a_W114`). Please test the association between vaccination and trust. Clearly state the null and alternative hypotheses, specify the name of the test, justify why the test is appropriate, report the p-value of the test, and explain the conclusion in the context.   
+ 
+ - 2. Obviously, vaccination rate may vary by age. Please redo the above test but stratifying by age group (`F_AGECAT`).   
+ 
+ - 3. Select several variables of interest and create visualizations to illustrate their distributions. Provide justification for your variable selection.
+ 
+ - 4. Clean the dataset to handle any missing data and justify your decisions. Please note that the value "98" and "99" indicate some kinds of missing values.  
+ - 5. Build a model to identify risk factors for non-vaccination. Explain your choice of model and what it can predict. What metrics would you use to assess performance? For this dataset, how would you know your model is adequate? 
+ 
+ - 6. From your model, what are the identified risk factors for vaccine hesitancy? Explain as if you were reporting the results to a non-technical stakeholder.
+
+For your convenience, the survey data are summarized in two appendices: A. Summary of baseline information of the ATP responders; B. Summary of Survey Responses in WAVE 114.
+
+
+
+```{r, include=FALSE,eval=TRUE}
+library(haven)
+ATP_W114_v2=read_sav("W114_Sept22/ATP W114.sav")
+ATP_W114_v2$trust=ifelse(ATP_W114_v2$CONF_a_W114%in%c(1,2),"Y",
+                         ifelse(ATP_W114_v2$CONF_a_W114==99,NA,"N"))
+ATP_W114_v2$COVID_vaccinated=ifelse(ATP_W114_v2$COVID_VAXDMOD_W114%in%c(1,2),"Y",
+                         ifelse(ATP_W114_v2$COVID_VAXDMOD_W114==99,NA,"N"))
+#save(ATP_W114_v2,file="ATP_W114_v2.RDA")
+
+n=dim(ATP_W114_v2)[1]
+p=dim(ATP_W114_v2)[2]
+
+k=grep("F_",substr(names(ATP_W114_v2),start=1,stop=2))
+kw=which(names(ATP_W114_v2)=="WEIGHT_W114" )
+
+ATP_base=ATP_W114_v2[,k]
+
+for (i in 1: length(k)){
+  ATP_base[[i]]=factor(ATP_base[[i]],
+                       levels=sort(unique(ATP_base[[i]])),
+                       labels=names(attr(ATP_base[[i]],"labels")))
+}
+
+```
+
+\newpage
+
+# Appendix A: Summary of baseline information of the ATP responders
+
+
+```{r, eval=TRUE}
+sjPlot::view_df(ATP_W114_v2[,c(k,kw)],
+                 weight.by ="WEIGHT_W114",
+                show.frq = TRUE,
+                show.prc = TRUE,
+                show.wtd.frq=TRUE,
+                show.wtd.prc=TRUE)
+```
+
+\newpage
+# Appendix B: Summary of Survey Reponses in WAVE 114
+
+```{r, eval=TRUE}
+sjPlot::view_df(ATP_W114_v2[,-c(k,167,168)],
+                 weight.by ="WEIGHT_W114",
+                show.frq = TRUE,
+                show.prc = TRUE,
+                show.wtd.frq=TRUE,
+                show.wtd.prc=TRUE)
+```
+
+
+```{r firstattemp, eval=FALSE}
+fit2=glm(I(COVID_vaccinated=="N")~trust+factor(F_AGECAT)+factor(F_METRO)+factor(F_GENDER)+factor(F_EDUCCAT)+factor(F_RACECMB)+factor(F_PARTYSUM_FINAL)+factor(F_IDEO)+factor(F_INC_TIER2)+factor(F_INTFREQ),family=binomial,weights=WEIGHT_W114,ATP_W114_v2)
+
+summary(fit2)
+
+drop1(fit2, test="LRT")
+```

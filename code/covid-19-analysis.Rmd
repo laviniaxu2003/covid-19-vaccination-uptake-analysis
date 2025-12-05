@@ -1,0 +1,619 @@
+---
+title: "Observational Study on COVID-19 Vaccination Uptake R Code"
+author: "Lavinia Xu"
+output:
+  html_document:
+    df_print: paged
+pdf_document: toc:true
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r, include=FALSE}
+filepath <- "~/Desktop/WUSTL/SU2024/COVID Research/Progress Report/ATP_W114_v2.RDA"
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+set.seed(10)
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(patchwork)
+  library(corrplot)
+  library(dplyr)
+  library(parallel)
+  library(haven)
+  library(tidyverse)
+  library(car)
+  library(MASS)
+  library(broom)
+})
+# Data Import
+load(file = filepath)
+data <- ATP_W114_v2
+# write.csv(data, "output.csv")
+```
+
+## Part 1: Create a contingency table to summarize vaccination uptake and trust
+
+```{r echo=FALSE}
+set.seed(10)
+
+# Combine Values
+data$trust_combined <- cut(data$CONF_a_W114,
+                           breaks = c(0, 2, 4),
+                           labels = c("High Trust", "Low Trust"),
+                           include.lowest = TRUE)
+
+data$vaccinated <- cut(data$COVID_VAXDMOD_W114,
+                       breaks = c(0, 2, 4),
+                       labels = c("Vaccinated", "Unvaccinated"),
+                       include.lowest = TRUE)
+
+# Contingency Table Creation
+contingency_table <- table(data$vaccinated, data$trust_combined)
+print(contingency_table)
+
+percentages <- prop.table(contingency_table, margin = 2) * 100
+print(percentages)
+```
+
+$H_{0}:$ There is no association between COVID vaccination status and
+trust in elected officials. $H_{a}:$ There is an association between
+COVID vaccination status and trust in elected officials.
+
+$\alpha = 0.05$
+
+In this case we chose to do a Chi-Squared test of independence. This
+tests if X = E(X). The expected value of each portion can be represented
+by the following equation:
+
+$\text{Expected frequency} = ( \frac{{\text{Grand total}}}{{(\text{Row total} \times \text{Column total})}} )$
+
+```{r}
+set.seed(10)
+
+# Testing trust
+chi_squared_test <- chisq.test(contingency_table)
+p_value <- chi_squared_test$p.value
+cat("P-Value of Chi-Sq Test:", p_value, "\n")
+```
+
+In this test our p-value is far below our $\alpha = 0.05$, meaning we
+have sufficient evidence to reject the null hypothesis that there is no
+association between COVID vaccination status and trust in elected
+officials. In practicality, this means that there is likely an
+association between COVID vaccination status and trust in elected
+officials.
+
+## Part 2: Stratify by age group and redo the test
+
+It is natural to assume that age group can play a key role in both
+vaccination status and trust in the government. Thus, we should preform
+the test while stratifying for age groups.
+
+```{r}
+set.seed(10)
+
+# Stratify Age Groups
+age_groups = c("18-29", "30-49", "50-64", "65+", "Refused")
+data$ages <- cut(data$F_AGECAT,
+                 breaks = c(0, 1, 2, 3, 4, Inf),
+                 labels = age_groups,
+                 include.lowest = TRUE)
+
+contingency_tables <- list()
+percentage_tables <- list()
+for (age_group in age_groups) {
+  subset_data <- subset(data, ages == age_group)
+  contingency_table <- table(subset_data$vaccinated, subset_data$trust_combined)
+  percentage_table <- prop.table(contingency_table, margin = 2) * 100
+  contingency_tables[[age_group]] <- contingency_table
+  percentage_tables[[age_group]] <- percentage_table
+
+  cat("Age Group:", age_group, "\n")
+  print(contingency_tables[[age_group]])
+  cat("\n")
+}
+```
+
+```{r}
+for (age_group in age_groups) {
+  cat("Age Group:", age_group, "\n")
+  print(percentage_tables[[age_group]])
+  cat("\n")
+}
+```
+
+Now we will preform the same Chi-Squared test as before for each age
+group.
+
+```{r}
+set.seed(10)
+
+# Run the Tests
+results <- list()
+for (age_group in age_groups) {
+  chi_squared_test <- chisq.test(contingency_tables[[age_group]])
+  results[[age_group]] <- chi_squared_test
+}
+
+# Display Results
+p_values <- sapply(results, function(test) test$p.value)
+p_value_table <- data.frame(
+  Age_Group = names(p_values),
+  P_Value = p_values
+)
+p_value_table
+```
+
+As we can see from the results, we have sufficient evidence to reject
+the null hypothesis for age groups 30-49, 50-64, and 65+. However, we do
+not have sufficient evidence to reject the null hypothesis for the age
+group of 18-29 and those who refused to give age information. This means
+that for individuals 30+, there is likely an association between trust
+and vaccination. However, for those in the range of 18-29 there is not
+sufficient evidence to make the same conclusion.
+
+## Part 3: Visualize variables of interest
+
+Now, we want to investigate more on features in order for future works.
+We can visualize some features (and their distributions) of the data, as
+well as their relationship with vaccination uptake.
+
+```{r}
+load(file = filepath)
+data <- ATP_W114_v2
+
+data <- subset(data, select = -c(QKEY, INTERVIEW_START_W114, INTERVIEW_END_W114, WEIGHT_W84_W114, WEIGHT_W64_W66_W83_W114))
+```
+
+There are 172 observations that have a value of 99, representing refused to answer, in the variable COVID_VAXDMOD_W114. Since there are not a large amount of them, we simply delete them.
+
+```{r}
+# Remove observations where COVID_VAXDMOD_W114 is 99
+data <- data[data$COVID_VAXDMOD_W114 != 99, ]
+# predictor <- subset(data, select = -c(COVID_VAXDMOD_W114))
+# responseY <- data$COVID_VAXDMOD_W114
+# write.csv(data, "cleaned.csv")
+```
+
+Explanation to be added: CONF_f_W114 + CONF_g_W114
+
+```{r}
+data_f_cleaned <- data %>% filter(!is.na(CONF_f_W114))
+data_g_cleaned <- data %>% filter(!is.na(CONF_g_W114))
+
+CONF_f_graph <- ggplot(data_f_cleaned, aes(x = factor(CONF_f_W114), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "stack") +
+  labs(title = "Distribution of Confidence in Medical Scientists",
+       x = "Confidence in Medical Scientists",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+CONF_g_graph <- ggplot(data_g_cleaned, aes(x = factor(CONF_g_W114), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "stack") +
+  labs(title = "Distribution of Confidence in Scientists",
+       x = "Confidence in Scientists",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+print(CONF_f_graph)
+print(CONF_g_graph)
+```
+
+The same thing applied to RQ2_F1A_W114 and RQ2_SCI_W114:
+
+```{r}
+data_F1A_cleaned <- data %>% filter(!is.na(RQ2_F1A_W114))
+data_SCI_cleaned <- data %>% filter(!is.na(RQ2_SCI_W114))
+
+F1A_graph <- ggplot(data_F1A_cleaned, aes(x = factor(RQ2_F1A_W114), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "stack") +
+  labs(title = "Distribution of Knowledge Proficiency about Medical Scientists",
+       x = "Knowledge Proficiency about Medical Scientists",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+SCI_graph <- ggplot(data_SCI_cleaned, aes(x = factor(RQ2_SCI_W114), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "stack") +
+  labs(title = "Distribution of Knowledge Proficiency about Scientists",
+       x = "Knowledge Proficiency about Scientists",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+print(F1A_graph)
+print(SCI_graph)
+```
+
+```{r}
+data$CONF_f_W114[is.na(data$CONF_f_W114)] <- 0
+data$CONF_g_W114[is.na(data$CONF_g_W114)] <- 0
+data$CONF_f_W114 <- data$CONF_f_W114 + data$CONF_g_W114
+
+data$RQ2_F1A_W114[is.na(data$RQ2_F1A_W114)] <- 0
+data$RQ2_SCI_W114[is.na(data$RQ2_SCI_W114)] <- 0
+data$RQ2_SCI_W114 <- data$RQ2_F1A_W114 + data$RQ2_SCI_W114
+
+data_cleaned <- subset(data, select = -c(CONF_g_W114, RQ2_F1A_W114))
+```
+
+Measure the associations between CONF and the response variable:
+
+```{r}
+CONF_scores <- subset(data_cleaned, select = c(CONF_a_W114, CONF_b_W114, CONF_c_W114, CONF_d_W114, CONF_e_W114, CONF_f_W114, CONF_i_W114, CONF_j_W114))
+
+titles <- c(
+  CONF_a_W114 = "Confidence in Elected Officials",
+  CONF_b_W114 = "Confidence in Journalists",
+  CONF_c_W114 = "Confidence in Military",
+  CONF_d_W114 = "Confidence in Religious Leaders",
+  CONF_e_W114 = "Confidence in Business Leaders",
+  CONF_f_W114 = "Confidence in (Medical) Scientists",
+  CONF_i_W114 = "Confidence in School Principals",
+  CONF_j_W114 = "Confidence in Police Officers"
+)
+
+for (score in colnames(CONF_scores)) {
+  title <- titles[score]
+  plot <- ggplot(data_cleaned, aes_string(x = paste0("factor(", score, ")"), fill = "factor(COVID_VAXDMOD_W114)")) +
+    geom_bar(position = "fill") +
+    labs(title = paste("Distribution of", title),
+         x = title,
+         y = "Proportion",
+         fill = "Vaccination Status") +
+    scale_fill_manual(values = c("1" = "lightblue", "2" = "mediumorchid1",
+                                 "3" = "tan1", "99" = "gray")) +
+    theme_minimal()
+  
+  print(plot)
+}
+```
+
+Plot of each CONF score with CONF_a (Elected officials)
+
+```{r}
+for (score in colnames(CONF_scores)) {
+  title <- titles[score]
+  plot <- ggplot(data_cleaned, aes_string(x = paste0("factor(", score, ")"), fill = "factor(CONF_a_W114)")) +
+    geom_bar(position = "stack") +
+    labs(title = paste("Distribution of", title),
+         x = title,
+         y = "Count",
+         fill = "Confidence in Elected Officials") +
+    scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", 
+                                 "3" = "orange", "4" = "red", 
+                                 "99" = "gray")) +
+    theme_minimal()
+  
+  print(plot)
+}
+```
+
+```{r}
+relig_graph <- ggplot(data_cleaned, aes(x = factor(F_RELIGCAT1), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "stack") +
+  labs(title = "Distribution of Religious",
+       x = "Religious",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+print(relig_graph)
+```
+
+```{r}
+gender_graph <- ggplot(data_cleaned, aes(x = factor(F_GENDER), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "fill") +
+  labs(title = "Distribution of Gender",
+       x = "Gender",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+print(gender_graph)
+```
+
+```{r}
+party_graph <- ggplot(data_cleaned, aes(x = factor(F_PARTYSUM_FINAL), fill = factor(COVID_VAXDMOD_W114))) +
+  geom_bar(position = "fill") +
+  labs(title = "Distribution of Parties",
+       x = "Parties",
+       y = "Count",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("1" = "lightgreen", "2" = "purple", "3" = "orange", "99" = "gray")) +
+  theme_minimal()
+
+print(party_graph)
+```
+
+```{r}
+data_Tau <- cbind(CONF_scores, COVID_VAXDMOD_W114 = data_cleaned$COVID_VAXDMOD_W114)
+
+# Ensure that all CONF variables and COVID_VAXDMOD_W114 are factors
+data_Tau <- data_Tau %>%
+  filter(across(starts_with("CONF"), ~ . != 99))
+data_Tau <- data_Tau %>%
+  mutate(across(starts_with("CONF"), as.factor), 
+         COVID_VAXDMOD_W114 = as.factor(COVID_VAXDMOD_W114))
+
+Tau_results <- data.frame(Variable = character(), Tau = numeric(), p_value = numeric(), stringsAsFactors = FALSE)
+
+for (score in colnames(data_Tau)[colnames(data_Tau) != "COVID_VAXDMOD_W114"]) {
+  title <- titles[score]
+  Tau_test <- cor.test(as.numeric(data_Tau[[score]]), as.numeric(data_Tau$COVID_VAXDMOD_W114), method = "kendall")
+  Tau_results <- rbind(Tau_results, data.frame(Variable = title, Tau = Tau_test$estimate, p_value = Tau_test$p.value))
+}
+print(Tau_results,row.names = FALSE)
+
+# Initialize data frame to store pairwise Kendall's Tau results
+CONF_Tau <- data.frame(Variable1 = character(), Variable2 = character(), Tau = numeric(), p_value = numeric(), stringsAsFactors = FALSE)
+
+for (i in 1:(length(colnames(data_Tau))-1)) {
+  title1 <- titles[i]
+  for (j in (i+1):(length(colnames(data_Tau))-1)) {
+    title2 <- titles[j]
+    pair_Tau <- cor.test(as.numeric(data_Tau[[i]]), as.numeric(data_Tau[[j]]), method = "kendall")
+    CONF_Tau <- rbind(CONF_Tau, data.frame(Variable1 = title1, Variable2 = title2, Tau = pair_Tau$estimate, p_value = pair_Tau$p.value))
+  }
+}
+print(CONF_Tau, row.names = FALSE)
+```
+
+## Part 4: Build a model to identify risk factors for non-vaccination
+
+Represent the variable names in a more audeince-friendly way
+
+```{r}
+variable_to_use <- c("COVID_VAXDMOD_W114", "CONF_a_W114", "CONF_f_W114", "CONF_i_W114", "F_AGECAT", "F_RELIGCAT1", "F_PARTYSUM_FINAL", "F_GENDER", "WEIGHT_W114")
+data_to_use <- subset(data_cleaned, select = variable_to_use)
+
+new_names <- c("VACCINATED", "CONF_GOV", "CONF_SCI", "CONF_EDU", "AGE", "RELIG", "PARTY", "GENDER", "WEIGHT")
+colnames(data_to_use) <- new_names
+```
+
+Some preparations before the baseline model:
+1. CONF_a_W114 option 1
+2. F_GENDER option 3
+3. Delete all 99s
+
+```{r}
+# data_to_use <- data_to_use %>%
+#   mutate(CONF_GOV = ifelse(CONF_GOV == 1, 2, CONF_GOV))
+data_to_use <- data_to_use %>%
+  mutate(GENDER = ifelse(GENDER == 3, 99, GENDER))
+data_to_use <- data_to_use %>%
+  filter(across(all_of(new_names), ~ . != 99))
+```
+
+Represent the labels within each variable to a more audience-friendly way.
+
+```{r}
+data_final <- data_to_use %>%
+  mutate(
+    VACCINATED = factor(VACCINATED, levels = c(1, 2, 3),
+                        labels = c("Y", "P", "N")),
+    CONF_GOV = factor(CONF_GOV, levels = c(1, 2, 3, 4),
+                      labels = c("H", "M", "L", "N")),
+    CONF_SCI = factor(CONF_SCI, levels = c(1, 2, 3, 4),
+                      labels = c("H", "M", "L", "N")),
+    CONF_EDU = factor(CONF_EDU, levels = c(1, 2, 3, 4),
+                      labels = c("H", "M", "L", "N")),
+    RELIG = factor(RELIG, levels = c(1, 2, 3, 4),
+                   labels = c("PRTST", "CTHLC", "UNFFL", "OTHER")),
+    PARTY = factor(PARTY, levels = c(1, 2, 9),
+                   labels = c("REPUB", "DEMOC", "OTHER")),
+    GENDER = factor(GENDER, levels = c(1, 2, 3),
+                    labels = c("M", "F", "OTHER")),
+  )
+str(data_final)
+# write.csv(data, "cleaned_data.csv")
+```
+
+```{r}
+gov_graph <- ggplot(data_final, aes(x = factor(CONF_GOV), fill = factor(VACCINATED))) +
+  geom_bar(position = "fill") +
+  labs(title = "Confidence in Elected Officials and Vaccination Uptake",
+       x = "Confidence in Government Officilals",
+       y = "Porpotion",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("Y" = "lightblue", "P" = "mediumorchid", "N" = "tan1")) +
+  scale_x_discrete(labels = c("HM" = "High and Moderate", "L" = "Low", "N" = "Not at all")) +
+  theme_minimal()
+
+print(gov_graph)
+```
+
+```{r}
+sci_graph <- ggplot(data_final, aes(x = factor(CONF_SCI), fill = factor(VACCINATED))) +
+  geom_bar(position = "fill") +
+  labs(title = "Confidence in Scientists and Vaccination Uptake",
+       x = "Confidence in Scientists",
+       y = "Porpotion",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("Y" = "lightblue", "P" = "mediumorchid", "N" = "tan1")) +
+  scale_x_discrete(labels = c("H" = "High", "M" = "Moderate", "L" = "Low", "N" = "Not at all")) +
+  theme_minimal()
+
+print(sci_graph)
+```
+
+```{r}
+age_graph <- ggplot(data_final, aes(x = factor(AGE), fill = factor(VACCINATED))) +
+  geom_bar(position = "fill") +
+  labs(title = "Age Groups and Vaccination Uptake",
+       x = "Age Group",
+       y = "Porpotion",
+       fill = "Vaccination Status") +
+  scale_fill_manual(values = c("Y" = "lightblue", "P" = "mediumorchid", "N" = "tan1")) +
+  scale_x_discrete(labels = c("1" = "18-29", "2" = "30-49", "3" = "50-64", "4" = "65+")) +
+  theme_minimal()
+
+print(age_graph)
+```
+
+Baseline model based on CONF scores analysis:
+
+```{r}
+ordinal_data <- data_final %>%
+  mutate(
+    VACCINATED = factor(VACCINATED, ordered = TRUE),
+    CONF_GOV = relevel(as.factor(CONF_GOV), ref = "N"), 
+    CONF_SCI = relevel(as.factor(CONF_SCI), ref = "N"), 
+    CONF_EDU = relevel(as.factor(CONF_EDU), ref = "N"), 
+    AGE = relevel(as.factor(AGE), ref = "1"),
+    RELIG = relevel(as.factor(RELIG), ref = "PRTST"),
+    PARTY = relevel(as.factor(PARTY), ref = "OTHER"),
+    GENDER = relevel(as.factor(GENDER), ref = "F")
+  )
+
+ordinal_model <- polr(VACCINATED ~ . - WEIGHT, data = ordinal_data, 
+                 Hess = TRUE)
+summary(ordinal_model)
+```
+
+Alternative mymodel2 (changes in difference between three levels)
+
+```{r}
+level_changed_data <- ordinal_data %>%
+  mutate(VACCINATED = recode_factor(VACCINATED,
+                                    "1" = "4",
+                                    "2" = "7",
+                                    "3" = "12"))
+level_changed_model <- polr(VACCINATED ~ . - WEIGHT, 
+                            data = level_changed_data, Hess = TRUE)
+summary(level_changed_model)
+```
+
+Alternative mymodel3 (Treat confidence score as ordered)
+
+```{r}
+orrdered_conf_data <- ordinal_data %>%
+  mutate(
+    VACCINATED = factor(VACCINATED, ordered = TRUE),
+    CONF_GOV = factor(CONF_GOV, ordered = TRUE),
+    CONF_SCI = factor(CONF_SCI, ordered = TRUE),
+    CONF_EDU = factor(CONF_EDU, ordered = TRUE),
+    AGE = relevel(as.factor(AGE), ref = "1"), 
+    RELIG = relevel(as.factor(RELIG), ref = "PRTST"), 
+    PARTY = relevel(as.factor(PARTY), ref = "OTHER"), 
+    GENDER = relevel(as.factor(GENDER), ref = "F")
+  )
+ordered_conf_model <- polr(VACCINATED ~ . - WEIGHT, 
+                           data = orrdered_conf_data, Hess = TRUE)
+summary(ordered_conf_model)
+```
+
+Alternative mymodel4: WEIGHT_W114 accounted (based on mymodel1)
+
+```{r}
+ordinal_weighted <- polr(VACCINATED ~ CONF_GOV + RELIG + PARTY + GENDER + AGE, 
+                         data = ordinal_data, 
+                         weights = WEIGHT, 
+                         Hess = TRUE)
+summary(ordinal_weighted)
+```
+
+```{r}
+ordinal_weighted <- polr(VACCINATED ~ CONF_EDU + AGE + RELIG + PARTY + GENDER, data = ordinal_data, weights = WEIGHT, Hess = TRUE)
+summary(ordinal_weighted)
+```
+
+Pearson chi-squared test between confidence scores
+
+```{r}
+chi_GOV_SCI <- chisq.test(table(ordinal_data$CONF_GOV, 
+                                ordinal_data$CONF_SCI))
+chi_GOV_EDU <- chisq.test(table(ordinal_data$CONF_GOV, 
+                                ordinal_data$CONF_EDU))
+chi_SCI_EDU <- chisq.test(table(ordinal_data$CONF_SCI, 
+                                ordinal_data$CONF_EDU))
+
+chi_square_results <- data.frame(
+  Pair = c("CONF_GOV & CONF_SCI", "CONF_GOV & CONF_EDU", 
+           "CONF_SCI & CONF_EDU"),
+  Chi_Square = c(chi_GOV_SCI$statistic, chi_GOV_EDU$statistic,
+                 chi_SCI_EDU$statistic),
+  p_value = c(chi_GOV_SCI$p.value, chi_GOV_EDU$p.value,
+              chi_SCI_EDU$p.value)
+)
+print(chi_square_results)
+```
+
+Alternative mymodel5: Combine response variables and use linear regression
+
+Combine completely vaccinated and one dose: Non vaccinations only for people who are not vaccinated at all
+
+```{r}
+data_YP <- ordinal_data %>%
+  mutate(VACCINATED = ifelse(VACCINATED %in% c("Y", "P"), "Y", "N"))
+table(data_YP$VACCINATED)
+
+model_YP <- glm(I(VACCINATED == "N") ~ CONF_SCI + AGE + RELIG + PARTY + GENDER, data = data_YP, family = binomial)
+summary(model_YP)
+```
+
+Alternative mymodel6: mymodel5 with weights WEIGHT_W114
+
+```{r}
+YP_weighted <- glm(I(VACCINATED == "N") ~ . - WEIGHT - VACCINATED, 
+                   data = data_YP, weights = WEIGHT, family = binomial)
+summary(YP_weighted)
+```
+
+Alternative mymodel7: Combine response variables and use linear regression
+
+Combine not vaccinated and one dose: Non vaccinations for people who are not fully vaccinated or not at all (people who took only one does might be forced for flight travel or school entry requirements)
+
+```{r}
+data_PN <- ordinal_data %>%
+  mutate(VACCINATED = ifelse(VACCINATED %in% "Y", "Y", "N"))
+table(data_PN$VACCINATED)
+
+model_PN <- glm(I(VACCINATED == "N") ~ . - WEIGHT - VACCINATED, 
+                data = data_PN, family = binomial)
+summary(model_PN)
+```
+
+Alternative mymodel8: mymodel7 with weights WEIGHT_W114
+
+```{r}
+PN_weighted <- glm(I(VACCINATED == "N") ~ . - WEIGHT - VACCINATED, 
+                   data = data_PN, weights = WEIGHT, family = binomial)
+summary(PN_weighted)
+```
+
+Interaction model
+
+```{r}
+interaction_data <- ordinal_data
+interaction_data$AGE_num <- as.numeric(interaction_data$AGE)
+conf_gender_model <- polr(VACCINATED ~ CONF_SCI * AGE_num + GENDER + PARTY + RELIG, 
+                          data = interaction_data, weights = WEIGHT,
+                          Hess = TRUE)
+summary(conf_gender_model)
+```
+
+```{r}
+conf_age_model <- polr(VACCINATED ~ CONF_GOV * AGE + 
+                                    CONF_SCI * AGE + 
+                                    CONF_EDU * AGE, 
+                        data = ordinal_data, weights = WEIGHT,
+                        Hess = TRUE)
+summary(conf_age_model)
+```
+
